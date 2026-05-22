@@ -29,7 +29,7 @@
         </div>
       </div>
       
-      <!-- ��动端：发布按钮靠右 -->
+      <!-- 移动端：发布按钮靠右 -->
       <div class="add-btn-wrapper" @click="goToPublish">
         <div class="add-btn-icon">
           <div class="plus-icon-container">
@@ -152,9 +152,13 @@ const fetchPosts = () => {
     params.push(`lng=${myLocation.value.lng}`);
   }
   if (keyword.value) {
-    params.push(`keyword=${keyword.value}`);
+    params.push(`keyword=${encodeURIComponent(keyword.value)}`);
   }
   if (params.length > 0) url += '?' + params.join('&');
+  
+  console.log('🔍 [搜索] 关键词:', keyword.value);
+  console.log('📡 [搜索] 请求 URL:', url);
+  console.log('📍 [搜索] 位置:', myLocation.value);
   
   const token = uni.getStorageSync('token');
   
@@ -168,6 +172,10 @@ const fetchPosts = () => {
     method: 'GET',
     header: header,
     success: (res) => {
+      console.log('✅ [搜索] 响应状态码:', res.statusCode);
+      console.log('✅ [搜索] 响应数据:', res.data);
+      console.log('✅ [搜索] 结果数量:', res.data ? res.data.length : 0);
+      
       if (res.statusCode === 200 && res.data) {
         postList.value = res.data.map(p => ({
           ...p,
@@ -179,7 +187,8 @@ const fetchPosts = () => {
       }
     },
     fail: (err) => {
-      console.error('获取帖子失败:', err);
+      console.error('❌ [搜索] 请求失败:', err);
+      uni.showToast({ title: '搜索失败: ' + (err.errMsg || '未知错误'), icon: 'none' });
     }
   });
 };
@@ -247,7 +256,10 @@ const handleTranslate = (item) => {
   }
 };
 
-const doSearch = () => { fetchPosts(); };
+const doSearch = () => {
+  console.log('🔘 [搜索] 点击搜索按钮，当前 keyword:', keyword.value);
+  fetchPosts();
+};
 
 const handleLike = (item) => {
   const token = uni.getStorageSync('token');
