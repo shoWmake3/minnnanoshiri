@@ -19,10 +19,10 @@ public class PostDocument {
 
     // 使用 ik_max_word 分词器 (前提: ES安装了ik插件)
     // 如果没有安装ik插件，请使用 analyzer = "standard"
-    @Field(type = FieldType.Text, analyzer = "standard", searchAnalyzer = "ik_smart")
+    @Field(type = FieldType.Text, analyzer = "ik_max_word", searchAnalyzer = "ik_smart")
     private String title;
 
-    @Field(type = FieldType.Text, analyzer = "standard", searchAnalyzer = "ik_smart")
+    @Field(type = FieldType.Text, analyzer = "ik_max_word", searchAnalyzer = "ik_smart")
     private String content;
 
     @Field(type = FieldType.Integer)
