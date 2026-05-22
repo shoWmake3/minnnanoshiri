@@ -15,9 +15,13 @@ import com.jienoshiri.platform.mapper.PostMapper;
 import com.jienoshiri.platform.mapper.UserMapper;
 import com.jienoshiri.platform.utils.LocationUtils;
 import com.jienoshiri.platform.utils.SensitiveWordUtil;
+import com.jienoshiri.platform.document.PostDocument;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.BeanUtils;
+import org.springframework.data.elasticsearch.client.elc.NativeQuery;
+import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
+import org.springframework.data.elasticsearch.core.SearchHits;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.http.HttpHeaders;
@@ -65,6 +69,9 @@ public class PostService {
     @Autowired
     private com.jienoshiri.platform.mapper.SysConfigMapper sysConfigMapper; // 注入Mapper
 
+    @Autowired
+    private ElasticsearchOperations elasticsearchOperations; // 新增注入
+
     private Map<String, Double> weightCache = new java.util.HashMap<>();
 
     @jakarta.annotation.PostConstruct
@@ -102,8 +109,31 @@ public class PostService {
         post.setStatus(0); // 默认待审核
         postMapper.insert(post);
 
+        // 3. 【新增】同步到 Elasticsearch
+        syncPostToES(post);
+
         // 发帖奖励声望
         changeReputation(post.getUserId(), 5, "发布帖子");
+    }
+
+    /**
+     * 辅助方法：同步帖子到 ES
+     */
+    private void syncPostToES(Post post) {
+        try {
+            PostDocument doc = new PostDocument();
+            doc.setId(post.getId());
+            doc.setTitle(post.getTitle());
+            doc.setContent(post.getContent());
+            doc.setStatus(post.getStatus());
+            doc.setCreateTime(post.getCreateTime());
+
+            // 使用 elasticsearchOperations 的 save 方法
+            elasticsearchOperations.save(doc);
+            System.out.println(">>> ES 索引更新成功: ID=" + post.getId());
+        } catch (Exception e) {
+            System.err.println(">>> ES 索引更新失败: " + e.getMessage());
+        }
     }
 
     /**
@@ -147,97 +177,141 @@ public class PostService {
      * 获取帖子列表 (首页信息流)
      */
     public List<PostVo> getPostList(BigDecimal userLat, BigDecimal userLng, String keyword, Long currentUserId, String identityType) {
-        // 1. 查所有帖子
-        QueryWrapper<Post> query = new QueryWrapper<>();
-        // 查状态为 1(正常) 与 3(已转Wiki) 的帖子，配合 weight_wiki 的加权逻辑
-        query.in("status", 1, 3);
+        List<Post> posts;
         if (keyword != null && !keyword.trim().isEmpty()) {
-            query.and(w -> w.like("title", keyword).or().like("content", keyword));
-        }
-        query.orderByDesc("create_time");
-        List<Post> posts = postMapper.selectList(query);
-        // 2. 准备推荐数据
-        List<Long> userCfIds = new ArrayList<>();
-        List<Long> contentBasedIds = new ArrayList<>();
-        if (currentUserId != null) {
-            try {
-                userCfIds = recommendationService.recommendPostIds(currentUserId, 10);
-            } catch (Exception e) {}
-
-            try {
-                contentBasedIds = recommendationService.recommendByContent(identityType);
-            } catch (Exception e) {}
-        }
-        List<PostVo> result = new ArrayList<>();
-        // 3. 混合打分
-        for (Post post : posts) {
-            PostVo vo = new PostVo();
-            BeanUtils.copyProperties(post, vo);
-            SysUser author = userMapper.selectById(post.getUserId());
-            if (author != null) {
-                vo.setAuthorName(author.getNickname());
-                vo.setAuthorAvatar(author.getAvatar());
-                vo.setAuthorIdentity(author.getIdentityType());
-                vo.setAuthorReputation(author.getReputation());
+            posts = getPostIdsByES(keyword);
+        } else {
+            // 1. 查所有帖子
+            QueryWrapper<Post> query = new QueryWrapper<>();
+            // 查状态为 1(正常) 与 3(已转Wiki) 的帖子，配合 weight_wiki 的加权逻辑
+            query.in("status", 1, 3);
+            if (keyword != null && !keyword.trim().isEmpty()) {
+                query.and(w -> w.like("title", keyword).or().like("content", keyword));
             }
-            // 计算 LBS 距离
-            if (userLat != null && post.getLatitude() != null) {
-                double km = LocationUtils.getDistance(userLat, userLng, post.getLatitude(), post.getLongitude());
-                vo.setDistance(km);
-            }
-            // 填充点赞状态
+            query.orderByDesc("create_time");
+            posts = postMapper.selectList(query);
+        }
+            // 2. 准备推荐数据
+            List<Long> userCfIds = new ArrayList<>();
+            List<Long> contentBasedIds = new ArrayList<>();
             if (currentUserId != null) {
-                Long count = postLikeMapper.selectCount(new QueryWrapper<PostLike>()
-                        .eq("user_id", currentUserId).eq("post_id", post.getId()));
-                vo.setIsLiked(count > 0);
-            }
-            // Redis 浏览量合并
-            String viewKey = "post:view:" + post.getId();
-            Integer redisViews = (Integer) redisTemplate.opsForValue().get(viewKey);
-            if (redisViews != null) {
-                vo.setViewCount(vo.getViewCount() + redisViews);
-            }
-            //混合加权核心逻辑 (动态读取)
-            double score = 0;
-            // 权重 1: UserCF
-            double wUserCF = getWeight("weight_user_cf", 1000.0);
-            if (userCfIds.contains(post.getId())) {
-                score += wUserCF;
-                vo.setTitle("【猜你喜欢】" + vo.getTitle());
-            }
-            // 权重 2: Content-Based
-            double wContent = getWeight("weight_content", 500.0);
-            if (contentBasedIds.contains(post.getId())) {
-                score += wContent;
-                if (!vo.getTitle().startsWith("【猜你喜欢】")) {
-                    vo.setTitle("【精选】" + vo.getTitle());
+                try {
+                    userCfIds = recommendationService.recommendPostIds(currentUserId, 10);
+                } catch (Exception e) {
+                }
+
+                try {
+                    contentBasedIds = recommendationService.recommendByContent(identityType);
+                } catch (Exception e) {
                 }
             }
-            // 权重 3: 作者声望
-            double wRep = getWeight("weight_reputation", 0.5);
-            if (author != null && author.getReputation() != null) {
-                double repBonus = author.getReputation() * wRep;
-                score += Math.min(Math.max(repBonus, -500), 200);
+            List<PostVo> result = new ArrayList<>();
+            // 3. 混合打分
+            for (Post post : posts) {
+                PostVo vo = new PostVo();
+                BeanUtils.copyProperties(post, vo);
+                SysUser author = userMapper.selectById(post.getUserId());
+                if (author != null) {
+                    vo.setAuthorName(author.getNickname());
+                    vo.setAuthorAvatar(author.getAvatar());
+                    vo.setAuthorIdentity(author.getIdentityType());
+                    vo.setAuthorReputation(author.getReputation());
+                }
+                // 计算 LBS 距离
+                if (userLat != null && post.getLatitude() != null) {
+                    double km = LocationUtils.getDistance(userLat, userLng, post.getLatitude(), post.getLongitude());
+                    vo.setDistance(km);
+                }
+                // 填充点赞状态
+                if (currentUserId != null) {
+                    Long count = postLikeMapper.selectCount(new QueryWrapper<PostLike>()
+                            .eq("user_id", currentUserId).eq("post_id", post.getId()));
+                    vo.setIsLiked(count > 0);
+                }
+                // Redis 浏览量合并
+                String viewKey = "post:view:" + post.getId();
+                Integer redisViews = (Integer) redisTemplate.opsForValue().get(viewKey);
+                if (redisViews != null) {
+                    vo.setViewCount(vo.getViewCount() + redisViews);
+                }
+                //混合加权核心逻辑 (动态读取)
+                double score = 0;
+                // 权重 1: UserCF
+                double wUserCF = getWeight("weight_user_cf", 1000.0);
+                if (userCfIds.contains(post.getId())) {
+                    score += wUserCF;
+                    vo.setTitle("【猜你喜欢】" + vo.getTitle());
+                }
+                // 权重 2: Content-Based
+                double wContent = getWeight("weight_content", 500.0);
+                if (contentBasedIds.contains(post.getId())) {
+                    score += wContent;
+                    if (!vo.getTitle().startsWith("【猜你喜欢】")) {
+                        vo.setTitle("【精选】" + vo.getTitle());
+                    }
+                }
+                // 权重 3: 作者声望
+                double wRep = getWeight("weight_reputation", 0.5);
+                if (author != null && author.getReputation() != null) {
+                    double repBonus = author.getReputation() * wRep;
+                    score += Math.min(Math.max(repBonus, -500), 200);
+                }
+                // 权重 4: LBS
+                double wLbs = getWeight("weight_lbs", 300.0);
+                if (vo.getDistance() != null && vo.getDistance() < 10) {
+                    score += wLbs;
+                }
+                // 权重 5: Wiki
+                double wWiki = getWeight("weight_wiki", 200.0);
+                if (post.getStatus() == 3) {
+                    score += wWiki;
+                }
+                score += (double) post.getId() / 1000000.0;
+                vo.setScore(score);
+                result.add(vo);
             }
-            // 权重 4: LBS
-            double wLbs = getWeight("weight_lbs", 300.0);
-            if (vo.getDistance() != null && vo.getDistance() < 10) {
-                score += wLbs;
-            }
-            // 权重 5: Wiki
-            double wWiki = getWeight("weight_wiki", 200.0);
-            if (post.getStatus() == 3) {
-                score += wWiki;
-            }
-            score += (double) post.getId() / 1000000.0;
-            vo.setScore(score);
-            result.add(vo);
-        }
-        // 4. 排序
-        result.sort((o1, o2) -> Double.compare(o2.getScore(), o1.getScore()));
-        return result;
+            // 4. 排序
+            result.sort((o1, o2) -> Double.compare(o2.getScore(), o1.getScore()));
+            return result;
+
+
     }
 
+    /**
+     * 使用 ES 搜索帖子 ID
+     */
+    private List<Post> getPostIdsByES(String keyword) {
+        try {
+            // 构建 ES 查询
+            NativeQuery query = NativeQuery.builder()
+                    .withQuery(q -> q.bool(b -> b
+                            .must(m -> m.multiMatch(mm -> mm
+                                    .query(keyword)
+                                    .fields("title", "content")
+                            ))
+                            .filter(f -> f.term(t -> t.field("status").value(1))) // 只搜已审核
+                    ))
+                    .build();
+
+            SearchHits<PostDocument> searchHits = elasticsearchOperations.search(query, PostDocument.class);
+
+            // 提取 ID
+            List<Long> postIds = searchHits.getSearchHits().stream()
+                    .map(hit -> hit.getContent().getId())
+                    .toList();
+
+            if (postIds.isEmpty()) {
+                return new ArrayList<>();
+            }
+
+            // 根据 ES 返回的 ID，去 MySQL 查完整数据 (为了兼容您后端的排序逻辑)
+            return postMapper.selectBatchIds(postIds);
+
+        } catch (Exception e) {
+            System.err.println(">>> ES 搜索帖子失败: " + e.getMessage());
+            return new ArrayList<>();
+        }
+    }
     public boolean toggleLike(Long postId, Long userId) {
         QueryWrapper<PostLike> query = new QueryWrapper<>();
         query.eq("post_id", postId).eq("user_id", userId);

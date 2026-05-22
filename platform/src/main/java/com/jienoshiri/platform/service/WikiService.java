@@ -9,10 +9,15 @@ import com.jienoshiri.platform.mapper.WikiMapper;
 import com.jienoshiri.platform.repository.WikiEsRepository;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
+import org.springframework.data.elasticsearch.core.SearchHit;
+import org.springframework.data.elasticsearch.core.SearchHits;
+import org.springframework.data.elasticsearch.core.query.StringQuery;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -27,6 +32,8 @@ public class WikiService {
     @Autowired
     private PostMapper postMapper;
 
+    @Autowired
+    private ElasticsearchOperations elasticsearchOperations; // 新增注入
     /**
      * 1. 创建/更新 Wiki (同时同步到 MySQL 和 ES)
      */
@@ -63,17 +70,47 @@ public class WikiService {
 
     /**
      * 2. 全文搜索 (优先查 ES，失败查 DB)
-     * ⭐ 修改：增加状态过滤，只展示已通过(status=1)的
+     * ✅ 已修改：使用 Spring Boot 3.x 原生 API 调用 ES
      */
     public List<Wiki> search(String keyword) {
         try {
-            // ES 搜索逻辑 (如果有 ES 并且数据量大，这里需要写 NativeSearchQueryBuilder 来过滤 status=1)
-            // 鉴于目前 ES 配置较简单，为了保证审核逻辑生效，我们优先演示 DB 查询 (稳健性高)
-            // 或者：您可以在 WikiDoc 里加 status 字段，然后 findByTitleOrContentAndStatus(..., ..., 1)
+            // 构建 JSON 查询字符串 (Spring Boot 3 推荐使用 StringQuery 处理复杂查询)
+            // 逻辑：(标题匹配 OR 摘要匹配 OR 内容匹配) AND (状态=1)
+            String jsonQuery = """
+                {
+                  "bool": {
+                    "must": [
+                      {
+                        "multi_match": {
+                          "query": "%s",
+                          "fields": ["title^3", "summary^2", "content"]
+                        }
+                      }
+                    ],
+                    "filter": [
+                      { "term": { "status": 1 } }
+                    ]
+                  }
+                }
+                """.formatted(keyword);
 
-            // 暂时降级直接查 DB，确保逻辑正确
-            return searchFromDb(keyword);
+            StringQuery query = new StringQuery(jsonQuery);
+
+            // 执行搜索
+            SearchHits<WikiDoc> searchHits = elasticsearchOperations.search(query, WikiDoc.class);
+
+            // 转换结果
+            List<Wiki> result = new ArrayList<>();
+            for (SearchHit<WikiDoc> hit : searchHits) {
+                Wiki wiki = new Wiki();
+                BeanUtils.copyProperties(hit.getContent(), wiki);
+                result.add(wiki);
+            }
+            return result;
+
         } catch (Exception e) {
+            e.printStackTrace(); // 实际开发建议用日志
+            System.err.println(">>> ES搜索失败，降级使用MySQL兜底: " + e.getMessage());
             return searchFromDb(keyword);
         }
     }
@@ -91,7 +128,7 @@ public class WikiService {
     }
 
     /**
-     * 3. ⭐ 核心功能：将帖子转化为 Wiki
+     * 3. 核心功能：将帖子转化为 Wiki
      */
     @Transactional
     public void createFromPost(Long postId, String category) {
@@ -116,7 +153,7 @@ public class WikiService {
             // wiki.setCoverImage(...);
         }
 
-        // ⭐ 关键修改：默认状态为 0 (待审核)，需要管理员后台审核通过后才能看到
+        // 默认状态为 0 (待审核)，需要管理员后台审核通过后才能看到
         wiki.setStatus(0);
 
         saveWiki(wiki);

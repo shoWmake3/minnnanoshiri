@@ -152,6 +152,7 @@ onShow(() => {
 const fetchPosts = () => {
   let url = 'http://localhost:8080/post/list';
   const params = [];
+  
   if (myLocation.value.lat) {
     params.push(`lat=${myLocation.value.lat}`);
     params.push(`lng=${myLocation.value.lng}`);
@@ -160,17 +161,21 @@ const fetchPosts = () => {
     params.push(`keyword=${keyword.value}`);
   }
   if (params.length > 0) url += '?' + params.join('&');
-
+  
   const token = uni.getStorageSync('token');
+  
+  // ✅ 修复处：必须先声明 header 对象，uni.request 的字段名是 header（单数）
   const header = {};
-  if (token) header['Authorization'] = token;
+  if (token) {
+    header['Authorization'] = token;
+  }
 
   uni.request({
     url: url,
     method: 'GET',
-    header: header,
+    header: header,  // 这里传入已声明的 header 变量
     success: (res) => {
-      if (res.statusCode === 200) {
+      if (res.statusCode === 200 && res.data) {
         postList.value = res.data.map(p => ({
           ...p,
           isLiked: p.isLiked || false,
@@ -179,6 +184,9 @@ const fetchPosts = () => {
           displayContent: p.content
         }));
       }
+    },
+    fail: (err) => {
+      console.error('获取帖子失败:', err);
     }
   });
 };
