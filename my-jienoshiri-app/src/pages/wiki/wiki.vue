@@ -87,14 +87,19 @@ onShow(() => {
 });
 
 const fetchList = () => {
-    const url = keyword.value 
-        ? `http://localhost:8080/wiki/search?keyword=${keyword.value}`
+    const url = keyword.value
+        ? `http://localhost:8080/wiki/search?keyword=${encodeURIComponent(keyword.value)}`
         : `http://localhost:8080/wiki/list`;
-        
+
     uni.request({
         url: url,
-        success: (res) => { 
-            list.value = res.data; 
+        success: (res) => {
+            console.log('Wiki 搜索结果:', res.data);
+            list.value = res.data || [];
+        },
+        fail: (err) => {
+            console.error('Wiki 搜索请求失败:', err);
+            list.value = [];
         }
     });
 };

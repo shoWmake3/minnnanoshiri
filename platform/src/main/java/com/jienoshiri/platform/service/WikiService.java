@@ -75,7 +75,8 @@ public class WikiService {
     public List<Wiki> search(String keyword) {
         try {
             // 构建 JSON 查询字符串 (Spring Boot 3 推荐使用 StringQuery 处理复杂查询)
-            // 逻辑：(标题匹配 OR 摘要匹配 OR 内容匹配) AND (状态=1)
+            // 逻辑：(标题匹配 OR 摘要匹配 OR 内容匹配) AND (状态=1) + 模糊搜索
+            // ⚠️ 注意：如果 ES 未启动或索引不存在，会自动降级到 MySQL 查询
             String jsonQuery = """
                 {
                   "bool": {
@@ -83,7 +84,9 @@ public class WikiService {
                       {
                         "multi_match": {
                           "query": "%s",
-                          "fields": ["title^3", "summary^2", "content"]
+                          "fields": ["title^3", "summary^2", "content"],
+                          "fuzziness": "AUTO",
+                          "operator": "or"
                         }
                       }
                     ],
@@ -106,6 +109,11 @@ public class WikiService {
                 BeanUtils.copyProperties(hit.getContent(), wiki);
                 result.add(wiki);
             }
+
+            System.out.println(">>> ES Wiki 搜索返回结果数：" + result.size());
+            if (result.isEmpty()) {
+                System.out.println(">>> ES 搜索结果为空，可能是：1) 没有 status=1 的数据 2) 分词问题 3) 关键词不匹配");
+            }
             return result;
 
         } catch (Exception e) {
@@ -119,12 +127,14 @@ public class WikiService {
      * 数据库兜底搜索
      */
     private List<Wiki> searchFromDb(String keyword) {
+        System.out.println(">>> 使用 MySQL 兜底搜索，关键词：" + keyword);
         QueryWrapper<Wiki> query = new QueryWrapper<>();
         // ⭐ 关键逻辑：(status = 1) AND (title like %k% OR content like %k%)
         query.eq("status", 1)
                 .and(wrapper -> wrapper.like("title", keyword).or().like("content", keyword));
-
-        return wikiMapper.selectList(query);
+        List<Wiki> dbResult = wikiMapper.selectList(query);
+        System.out.println(">>> MySQL 兜底搜索结果数：" + dbResult.size());
+        return dbResult;
     }
 
     /**
