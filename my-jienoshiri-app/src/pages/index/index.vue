@@ -16,7 +16,7 @@
       </div>
       
       <!-- 移动端：搜索框 -->
-      <div class="search-box mobile-search" @click="focusSearchInput">
+      <div class="search-box mobile-search">
         <text class="search-icon">🔍</text>
         <input ref="searchInputRef" class="search-input" v-model="keyword" placeholder="搜百科、找攻略、看世界..." confirm-type="search"
           placeholder-style="color: #64748b; font-weight: 300;" @confirm="doSearch" />
@@ -131,12 +131,6 @@ const keyword = ref('');
 const isLoadingPosts = ref(false);
 const searchInputRef = ref(null);
 let fetchSeq = 0;
-
-const focusSearchInput = () => {
-  if (searchInputRef.value) {
-    searchInputRef.value.focus();
-  }
-};
 
 onShow(() => {
   uni.getLocation({
@@ -288,6 +282,7 @@ const goToPublish = () => {
 };
 const handleImgError = () => {};
 const isVideo = (url) => url && (url.endsWith('.mp4') || url.endsWith('.mov'));
+const loadMore = () => {}; // 加载更多实现
 </script>
 
 <style>
@@ -321,7 +316,7 @@ const isVideo = (url) => url && (url.endsWith('.mp4') || url.endsWith('.mov'));
   position: absolute;
   top: 0; left: 0; width: 100%; height: 100%;
   opacity: 0.03;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65'[...]
 }
 
 .blob {
@@ -374,6 +369,7 @@ const isVideo = (url) => url && (url.endsWith('.mp4') || url.endsWith('.mov'));
   box-shadow: 0 2px 10px rgba(0,0,0,0.03);
   transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
   margin-right: 12px; /* 与右边按钮保持间距 */
+  cursor: text;
 }
 
 .mobile-search:focus-within {
