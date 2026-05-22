@@ -1,52 +1,26 @@
-# =========================================================================
-# 1. 核心数据与大文件 (最重要的部分：防止 GitHub 卡死)
-# =========================================================================
-# 忽略 MinIO 本地存储的数据文件夹 (用户上传的图片视频不进仓库)
-MinIO/
-
-# 忽略本地数据库导出文件
-*.sql
-*.hprof
-
-# =========================================================================
-# 2. Java (Spring Boot) 部分
-# =========================================================================
-target/
-!.mvn/wrapper/maven-wrapper.jar
+```
+# Compiled and build artifacts
 *.class
-*.jar
-*.war
-*.ear
-
-# 忽略本地环境配置文件 (防止泄露你的数据库密码和 API Key)
-# 建议保留 application.yml 模板，忽略 application-local.yml 等
-.mtj.tmp/
+*.o
+*.obj
+*.out
+# Dependencies
+__pycache__/
+.mypy_cache/
+.pytest_cache/
+# Logs and temp files
 *.log
-
-# =========================================================================
-# 3. 前端 (Uni-app / Vue) 部分
-# =========================================================================
-node_modules/
-dist/
-unpackage/
-.hbuilderx/
-
-# HBuilderX 产生的临时文件
-.tmp/
-.DS_Store
-
-# =========================================================================
-# 4. 开发工具与系统文件 (IDE & OS)
-# =========================================================================
-# IntelliJ IDEA
-.idea/
-*.iml
-*.iws
-
-# Visual Studio Code
+*.tmp
+*.swp
+# Environment
+.env
+.env.local
+*.env.*
+# Editors
 .vscode/
-
-# 系统缓存
-Thumbs.db
-desktop.ini
-
+.idea/
+# Coverage
+coverage/
+htmlcov/
+.coverage
+```
