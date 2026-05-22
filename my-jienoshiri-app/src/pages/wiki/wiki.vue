@@ -87,14 +87,16 @@ onShow(() => {
 });
 
 const fetchList = () => {
-  const url = keyword.value 
-    ? `http://localhost:8080/wiki/search?keyword=${keyword.value}`
-    : `http://localhost:8080/wiki/list`;
-    
-  uni.request({
-    url: url,
-    success: (res) => { list.value = res.data; }
-  });
+    const url = keyword.value 
+        ? `http://localhost:8080/wiki/search?keyword=${keyword.value}`
+        : `http://localhost:8080/wiki/list`;
+        
+    uni.request({
+        url: url,
+        success: (res) => { 
+            list.value = res.data; 
+        }
+    });
 };
 
 const doSearch = () => { fetchList(); };
