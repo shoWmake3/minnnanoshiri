@@ -179,15 +179,23 @@ public class PostService {
     public List<PostVo> getPostList(BigDecimal userLat, BigDecimal userLng, String keyword, Long currentUserId, String identityType) {
         List<Post> posts;
         if (keyword != null && !keyword.trim().isEmpty()) {
+            System.out.println(">>> 接收到搜索请求，关键词：" + keyword);
             posts = getPostIdsByES(keyword);
+            System.out.println(">>> ES 搜索返回帖子数：" + posts.size());
+            // ✅ 新增：如果 ES 没搜到，降级到 MySQL 搜索
+            if (posts.isEmpty()) {
+                System.out.println(">>> ES 未找到结果，降级到 MySQL 搜索...");
+                QueryWrapper<Post> fallbackQuery = new QueryWrapper<>();
+                fallbackQuery.in("status", 1, 3)
+                        .and(w -> w.like("title", keyword).or().like("content", keyword));
+                posts = postMapper.selectList(fallbackQuery);
+                System.out.println(">>> MySQL 降级搜索返回帖子数：" + posts.size());
+            }
         } else {
             // 1. 查所有帖子
             QueryWrapper<Post> query = new QueryWrapper<>();
-            // 查状态为 1(正常) 与 3(已转Wiki) 的帖子，配合 weight_wiki 的加权逻辑
+            // 查状态为 1(正常) 与 3(已转 Wiki) 的帖子，配合 weight_wiki 的加权逻辑
             query.in("status", 1, 3);
-            if (keyword != null && !keyword.trim().isEmpty()) {
-                query.and(w -> w.like("title", keyword).or().like("content", keyword));
-            }
             query.orderByDesc("create_time");
             posts = postMapper.selectList(query);
         }
@@ -287,7 +295,7 @@ public class PostService {
                     .withQuery(q -> q.bool(b -> b
                             .must(m -> m.multiMatch(mm -> mm
                                     .query(keyword)
-                                    .fields("title", "content")
+                                    .fields("title", "content").fuzziness("AUTO")
                             ))
                             .filter(f -> f.term(t -> t.field("status").value(1))) // 只搜已审核
                     ))
